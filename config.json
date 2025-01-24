@@ -1,0 +1,23 @@
+{
+    "DefaultDatabaseID": "DEFAULT",
+    "Flags" : [
+        {"Key": "debug", "Value": "true"},
+        {"Key":"helperid", "Value": "ssdhlite"}
+    ],
+    "Databases" : [
+        {
+            "ID" : "DEFAULT",
+            "Schema": "public",
+            "ConnectionString" : "sample.db",
+            "DriverName" : "sqlite",
+            "InterpolateTables": true,
+            "StorageType": "FILE",
+            "GroupID": "DEFAULT",
+            "SequenceGenerator" : {
+                "UpsertQuery" : "",
+                "ResultQuery" : "INSERT INTO users (sequence_name, next) VALUES ('{SequenceName}', 1) ON CONFLICT(username) DO UPDATE SET next = excluded.next RETURNING next;",
+                "NamePlaceHolder": "{SequenceName}"
+            }
+        }
+    ]
+}
