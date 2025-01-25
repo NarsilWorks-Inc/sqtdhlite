@@ -48,6 +48,7 @@ const (
 			ID int,
 			Code nvarchar(10),
 			[Name] nvarchar(25),
+			Cost decimal(10,4),
 			PRIMARY KEY ([ID] ASC)
 		);
 
@@ -278,8 +279,8 @@ func TestWriteTransactions(t *testing.T) {
 		}
 
 		_, err = c.Exec(`
-			INSERT INTO JokeTable (ID, Code, Name)
-			VALUES (?, ?, ?);`, i, fmt.Sprintf("CODE%d", i), fmt.Sprintf("Code %d", i))
+			INSERT INTO JokeTable (ID, Code, Name, Cost)
+			VALUES (?, ?, ?, ?);`, i, fmt.Sprintf("CODE%d", i), fmt.Sprintf("Code %d", i), 12.57*float64(i))
 		if err != nil {
 			//c.Rollback()
 			t.Log(err.Error())
@@ -289,6 +290,67 @@ func TestWriteTransactions(t *testing.T) {
 		i++
 	}
 	c.Commit()
+}
+
+func TestGetRowsFromJoke(t *testing.T) {
+
+	var (
+		err error
+		c   dhl.DataHelperLite
+	)
+
+	//c = &SQLServerHelper{}
+	c, err = dhl.New(nil, `sqtdhlite`)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+	cf, err := cfg.Load(`config.json`)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+	defer c.Close()
+
+	type Joke struct {
+		ID   int
+		Code string
+		Name string
+		Cost ssd.Decimal
+	}
+
+	ts := Joke{}
+
+	rows, err := c.Query(`SELECT ID, Code, Name, Cost FROM JokeTable;`)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		err = rows.Scan(&ts.ID, &ts.Code, &ts.Name, &ts.Cost)
+		if err != nil {
+			t.Log(err.Error())
+			t.Fail()
+			return
+		}
+
+		t.Logf("ID: %d, Code: %s, Name: %s, Cost: %v", ts.ID, ts.Code, ts.Name, ts.Cost)
+	}
+
+	if err = rows.Err(); err != nil {
+		t.Log(err.Error())
+		return
+	}
 }
 
 func TestSequence(t *testing.T) {
@@ -505,7 +567,7 @@ func TestGetBytes(t *testing.T) {
 
 	//c = &SQLServerHelper{}
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -551,109 +613,6 @@ func TestGetBytes(t *testing.T) {
 	}
 }
 
-func TestGetDecimal(t *testing.T) {
-	var (
-		err error
-		c   dhl.DataHelperLite
-	)
-
-	c, err = dhl.New(nil, `ssdhlite`)
-	if err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-
-	cf, err := cfg.Load(`config.json`)
-	if err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`OFFICE`)); err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-	defer c.Close()
-
-	type input1 struct {
-		refid   string
-		dcc     ssd.Decimal
-		catched int
-	}
-
-	var i1 input1
-
-	err = c.QueryRow(`SELECT ReferenceID,
-							 Catched,
-							 DimensionCaseCount
-						FROM tdrShipment
-						WHERE ShipmentKey = @p1;`, 1053811).
-		Scan(&i1.refid, &i1.catched, &i1.dcc)
-
-	if err != nil {
-
-		if err != dhl.ErrNoRows {
-			t.Log(err.Error())
-			t.Fail()
-			return
-		}
-
-		t.Log(err.Error())
-	}
-
-	t.Logf("%s %d %s", i1.refid, i1.catched, i1.dcc)
-}
-
-func TestExecDecimal(t *testing.T) {
-	var (
-		err error
-		c   dhl.DataHelperLite
-	)
-
-	c, err = dhl.New(nil, `ssdhlite`)
-	if err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-
-	cf, err := cfg.Load(`config.json`)
-	if err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`OFFICE`)); err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-	defer c.Close()
-
-	var (
-		dcc ssd.Decimal
-	)
-
-	dcc, _ = ssd.NewFromString("10.12345678")
-
-	affr, err := c.Exec(`UPDATE tdrShipment
-							SET UserFld2 = @p1,
-								DimensionCaseCount = @p2
-						WHERE ShipmentKey = @p3;`, "Updated!", dcc, 1053811)
-
-	if err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-
-	t.Logf("Affected rows %d", affr)
-}
-
 func TestExecRowsAffected(t *testing.T) {
 	var (
 		err  error
@@ -661,7 +620,7 @@ func TestExecRowsAffected(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -705,7 +664,7 @@ func TestDeferredRollbackNestedTransDeleteNoError(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -719,7 +678,7 @@ func TestDeferredRollbackNestedTransDeleteNoError(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`TESTDB-HOME`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
@@ -780,7 +739,7 @@ func TestDeferredRollbackNestedTransDelete1stQueryError(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -794,7 +753,7 @@ func TestDeferredRollbackNestedTransDelete1stQueryError(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`TESTDB-HOME`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
@@ -857,7 +816,7 @@ func TestDeferredRollbackNestedTransDelete2ndQueryError(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -871,7 +830,7 @@ func TestDeferredRollbackNestedTransDelete2ndQueryError(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`TESTDB-HOME`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
@@ -934,7 +893,7 @@ func TestDeferredRollbackNestedTransDelete3rdQueryError(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -948,7 +907,7 @@ func TestDeferredRollbackNestedTransDelete3rdQueryError(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`TESTDB-HOME`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
@@ -1011,7 +970,7 @@ func TestManualRollbackNestedTransDelete1stQueryError(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -1025,7 +984,7 @@ func TestManualRollbackNestedTransDelete1stQueryError(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`TESTDB-HOME`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
@@ -1088,7 +1047,7 @@ func TestManualRollbackNestedTransDelete2ndQueryError(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -1102,7 +1061,7 @@ func TestManualRollbackNestedTransDelete2ndQueryError(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`TESTDB-HOME`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
@@ -1165,7 +1124,7 @@ func TestManualRollbackNestedTransDelete3rdQueryError(t *testing.T) {
 		c    dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -1179,7 +1138,7 @@ func TestManualRollbackNestedTransDelete3rdQueryError(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`TESTDB-HOME`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return

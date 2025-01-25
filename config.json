@@ -7,7 +7,6 @@
     "Databases" : [
         {
             "ID" : "DEFAULT",
-            "Schema": "public",
             "ConnectionString" : "sample.db",
             "DriverName" : "sqlite",
             "InterpolateTables": true,
