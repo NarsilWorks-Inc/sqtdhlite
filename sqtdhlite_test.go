@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	dhl "github.com/NarsilWorks-Inc/datahelperlite"
 	_ "github.com/denisenkom/go-mssqldb"
@@ -14,65 +13,156 @@ import (
 
 const (
 	MasterSlaveSQL string = `
-		SET NOCOUNT ON
+		DROP TABLE IF EXISTS SlaveTable1;
+		DROP TABLE IF EXISTS SlaveTable2;
+		DROP TABLE IF EXISTS MasterTable;
+		DROP TABLE IF EXISTS JokeTable;
+		DROP TABLE IF EXISTS SequenceTable;
 
-		IF OBJECT_ID(N'dbo.SlaveTable1', N'U') IS NOT NULL
-			DROP TABLE dbo.SlaveTable1
-
-		IF OBJECT_ID(N'dbo.SlaveTable2', N'U') IS NOT NULL
-			DROP TABLE dbo.SlaveTable2
-
-		IF OBJECT_ID(N'dbo.MasterTable', N'U') IS NOT NULL
-			DROP TABLE dbo.MasterTable;
-
-		CREATE TABLE dbo.MasterTable (
+		CREATE TABLE MasterTable (
 			ID int,
 			Code nvarchar(10),
 			[Name] nvarchar(25),
-			CONSTRAINT [PK_MasterTable] PRIMARY KEY CLUSTERED ([ID])
+			PRIMARY KEY ([ID] ASC)
 		);
 
-
-		CREATE TABLE dbo.SlaveTable1 (
+		CREATE TABLE SlaveTable1 (
 			ParentID int,
 			ID int,
 			Code nvarchar(10),
 			[Name] nvarchar(25),
-			CONSTRAINT [PK_SlaveTable1] PRIMARY KEY CLUSTERED ([ID])
+			PRIMARY KEY ([ID] ASC),
+			FOREIGN KEY(ParentID) REFERENCES MasterTable(ID)
 		);
 
-		CREATE TABLE dbo.SlaveTable2 (
+		CREATE TABLE SlaveTable2 (
 			ParentID int,
 			ID int,
 			Code nvarchar(10),
 			[Name] nvarchar(25),
-			CONSTRAINT [PK_SlaveTable2] PRIMARY KEY CLUSTERED ([ID])
+			PRIMARY KEY ([ID] ASC),
+			FOREIGN KEY(ParentID) REFERENCES MasterTable(ID)
 		);
 
-		ALTER TABLE [dbo].[SlaveTable1]  WITH CHECK ADD  CONSTRAINT [FK_SlaveTable1_MasterTable] FOREIGN KEY([ParentID])
-		REFERENCES [dbo].[MasterTable] ([ID]);
+		CREATE TABLE JokeTable (
+			ID int,
+			Code nvarchar(10),
+			[Name] nvarchar(25),
+			PRIMARY KEY ([ID] ASC)
+		);
 
-		ALTER TABLE [dbo].[SlaveTable1] CHECK CONSTRAINT [FK_SlaveTable1_MasterTable];
+		CREATE TABLE SequenceTable (
+			sequence_name nvarchar(30),
+			next int,
+			PRIMARY KEY (sequence_name ASC)
+		);
 
-		ALTER TABLE [dbo].[SlaveTable2]  WITH CHECK ADD  CONSTRAINT [FK_SlaveTable2_MasterTable] FOREIGN KEY([ParentID])
-		REFERENCES [dbo].[MasterTable] ([ID]);
-
-		ALTER TABLE [dbo].[SlaveTable2] CHECK CONSTRAINT [FK_SlaveTable2_MasterTable];
-
-
-		INSERT INTO dbo.MasterTable (ID, Code, [Name]) VALUES (1, 'CODE1', 'Code 1');
-		INSERT INTO dbo.SlaveTable1 (ID, Code, [Name], ParentID) VALUES (1, 'SLAV1CODE1', 'Slave1 Code 1', 1);
-		INSERT INTO dbo.SlaveTable1 (ID, Code, [Name], ParentID) VALUES (2, 'SLAV1CODE2', 'Slave1 Code 2', 1);
-		INSERT INTO dbo.SlaveTable1 (ID, Code, [Name], ParentID) VALUES (3, 'SLAV1CODE3', 'Slave1 Code 3', 1);
-		INSERT INTO dbo.SlaveTable1 (ID, Code, [Name], ParentID) VALUES (4, 'SLAV1CODE4', 'Slave1 Code 4', 1);
-		INSERT INTO dbo.SlaveTable1 (ID, Code, [Name], ParentID) VALUES (5, 'SLAV1CODE5', 'Slave1 Code 5', 1);
-		INSERT INTO dbo.SlaveTable2 (ID, Code, [Name], ParentID) VALUES (6, 'SLAV2CODE1', 'Slave2 Code 1', 1);
-		INSERT INTO dbo.SlaveTable2 (ID, Code, [Name], ParentID) VALUES (7, 'SLAV2CODE2', 'Slave2 Code 2', 1);
-		INSERT INTO dbo.SlaveTable2 (ID, Code, [Name], ParentID) VALUES (8, 'SLAV2CODE3', 'Slave2 Code 3', 1);
-		INSERT INTO dbo.SlaveTable2 (ID, Code, [Name], ParentID) VALUES (9, 'SLAV2CODE4', 'Slave2 Code 4', 1);
-		INSERT INTO dbo.SlaveTable2 (ID, Code, [Name], ParentID) VALUES (10, 'SLAV2CODE5', 'Slave2 Code 5', 1);
+		INSERT INTO MasterTable (ID, Code, [Name]) VALUES (1, 'CODE1', 'Code 1');
+		INSERT INTO SlaveTable1 (ID, Code, [Name], ParentID) VALUES (1, 'SLAV1CODE1', 'Slave1 Code 1', 1);
+		INSERT INTO SlaveTable1 (ID, Code, [Name], ParentID) VALUES (2, 'SLAV1CODE2', 'Slave1 Code 2', 1);
+		INSERT INTO SlaveTable1 (ID, Code, [Name], ParentID) VALUES (3, 'SLAV1CODE3', 'Slave1 Code 3', 1);
+		INSERT INTO SlaveTable1 (ID, Code, [Name], ParentID) VALUES (4, 'SLAV1CODE4', 'Slave1 Code 4', 1);
+		INSERT INTO SlaveTable1 (ID, Code, [Name], ParentID) VALUES (5, 'SLAV1CODE5', 'Slave1 Code 5', 1);
+		INSERT INTO SlaveTable2 (ID, Code, [Name], ParentID) VALUES (6, 'SLAV2CODE1', 'Slave2 Code 1', 1);
+		INSERT INTO SlaveTable2 (ID, Code, [Name], ParentID) VALUES (7, 'SLAV2CODE2', 'Slave2 Code 2', 1);
+		INSERT INTO SlaveTable2 (ID, Code, [Name], ParentID) VALUES (8, 'SLAV2CODE3', 'Slave2 Code 3', 1);
+		INSERT INTO SlaveTable2 (ID, Code, [Name], ParentID) VALUES (9, 'SLAV2CODE4', 'Slave2 Code 4', 1);
+		INSERT INTO SlaveTable2 (ID, Code, [Name], ParentID) VALUES (10, 'SLAV2CODE5', 'Slave2 Code 5', 1);
 	`
 )
+
+func TestLoadData(t *testing.T) {
+	var (
+		err  error
+		affr int64
+		c    dhl.DataHelperLite
+	)
+
+	c, err = dhl.New(nil, `sqtdhlite`)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+
+	cf, err := cfg.Load(`config.json`)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+	defer c.Close()
+
+	affr, err = c.Exec(MasterSlaveSQL)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+
+	t.Logf("%d rows inserted", affr)
+}
+
+func TestGetRow(t *testing.T) {
+	var (
+		err error
+		c   dhl.DataHelperLite
+	)
+
+	c, err = dhl.New(nil, `sqtdhlite`)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+
+	cf, err := cfg.Load(`config.json`)
+	if err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
+		t.Log(err.Error())
+		t.Fail()
+		return
+	}
+	defer c.Close()
+
+	type Slave struct {
+		ID       int
+		ParentID int
+		Code     string
+		Name     string
+	}
+
+	ts := Slave{}
+
+	err = c.QueryRow(`SELECT ID, Code, Name, ParentID FROM SlaveTable2 WHERE ID=?;`, 8).Scan(
+		&ts.ID,
+		&ts.Code,
+		&ts.Name,
+		&ts.ParentID)
+
+	if err != nil {
+		if err != dhl.ErrNoRows {
+			t.Log(err.Error())
+			t.Fail()
+			return
+		}
+
+		t.Log(err.Error())
+	}
+
+	t.Logf("ID: %d, Code: %s, Name: %s, ParentID: %d", ts.ID, ts.Code, ts.Name, ts.ParentID)
+}
 
 func TestGetRows(t *testing.T) {
 
@@ -82,7 +172,7 @@ func TestGetRows(t *testing.T) {
 	)
 
 	//c = &SQLServerHelper{}
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -100,23 +190,14 @@ func TestGetRows(t *testing.T) {
 		return
 	}
 	defer c.Close()
-	str := "Administrator"
-	rows, err := c.Query(`SELECT TOP 10 EmailKey, Subject, Format,
-								SenderName, SenderAddress, DateQueued
-						 FROM tnfEmailSent
-						 WHERE SenderName = ?;`, dhl.VarChar(str))
+
+	rows, err := c.Query(`SELECT ID, Code, Name, ParentID FROM SlaveTable1;`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
 	}
 	defer rows.Close()
-
-	// var (
-	// 	emailkey                            int64
-	// 	subject, format, sender, senderaddr string
-	// 	datequeued                          time.Time
-	// )
 
 	cols, err := rows.Columns()
 	if err != nil {
@@ -127,156 +208,27 @@ func TestGetRows(t *testing.T) {
 	for _, col := range cols {
 		t.Log(col.Name(), col.DatabaseTypeName(), col.ScanType())
 	}
-	ifrows := make([]interface{}, 6)
-	brows := make([]string, 6)
+	ifrows := make([]interface{}, 4)
+	brows := make([]string, 4)
 	for i := range ifrows {
 		ifrows[i] = &brows[i]
 	}
 
 	for rows.Next() {
-		// err = rows.Scan(
-		// 	&emailkey,
-		// 	&subject,
-		// 	&format,
-		// 	&sender,
-		// 	&senderaddr,
-		// 	&datequeued)
 		err = rows.Scan(ifrows...)
-
 		if err != nil {
 			t.Log(err.Error())
 			t.Fail()
 			return
 		}
 
-		// t.Logf("EmailKey: %d, Subject: %s, Format: %s, Sender: %s, SenderAddress: %s, Date Queued: %s",
-		// 	emailkey, subject, format, sender, senderaddr, datequeued.Format(`2006-01-02T15:04:05.000Z`))
-
-		// t.Logf("EmailKey: %d, Subject: %s, Format: %s, Sender: %s, SenderAddress: %s, Date Queued: %s",
-		// 	emailkey, subject, format, sender, senderaddr, datequeued)
-
-		t.Logf("EmailKey: %s, Subject: %s, Format: %s, Sender: %s, SenderAddress: %s, Date Queued: %s",
-			brows[0], brows[1], brows[2], brows[3], brows[4], brows[5])
+		t.Logf("ID: %s, Code: %s, Name: %s, ParentID: %s", brows[0], brows[1], brows[2], brows[3])
 	}
 
-	if rows.Err() != nil {
+	if err = rows.Err(); err != nil {
 		t.Log(err.Error())
 		return
 	}
-}
-
-func TestGetRow(t *testing.T) {
-	var (
-		err error
-		c   dhl.DataHelperLite
-	)
-
-	//c = &SQLServerHelper{}
-
-	c, err = dhl.New(nil, `ssdhlite`)
-	if err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-
-	cf, err := cfg.Load(`config.json`)
-	if err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
-		t.Log(err.Error())
-		t.Fail()
-		return
-	}
-	defer c.Close()
-
-	/*
-		var (
-			emailkey                            int64
-			subject, format, sender, senderaddr string
-			//datequeued                          sql.NullTime
-			datequeued time.Time
-		)
-
-		err = c.QueryRow(`SELECT EmailKey, Subject, Format,
-							SenderName, SenderAddress, DateQueued
-							FROM tnfEmailSent;`).Scan(
-			&emailkey,
-			&subject,
-			&format,
-			&sender,
-			&senderaddr,
-			&datequeued)
-
-	*/
-
-	/*
-		type teststruct struct {
-			EmailKey   *int
-			Subject    *string
-			Format     *string
-			Sender     *string
-			SenderAddr *string
-			DateQueued *time.Time
-		}
-
-		ts := teststruct{}
-
-		err = c.QueryRow(`SELECT EmailKey, Subject, Format,
-							SenderName, SenderAddress, DateQueued
-							FROM tnfEmailSent;`).Scan(
-			&ts.EmailKey,
-			&ts.Subject,
-			&ts.Format,
-			&ts.Sender,
-			&ts.SenderAddr,
-			&ts.DateQueued)
-	*/
-
-	type teststruct struct {
-		EmailKey   int
-		Subject    string
-		Format     string
-		Sender     string
-		SenderAddr string
-		DateQueued time.Time
-	}
-
-	ts := teststruct{}
-
-	err = c.QueryRow(`SELECT EmailKey, Subject, Format,
-							SenderName, SenderAddress, DateQueued
-							FROM tnfEmailSent WHERE 1=2;`).Scan(
-		&ts.EmailKey,
-		&ts.Subject,
-		&ts.Format,
-		&ts.Sender,
-		&ts.SenderAddr,
-		&ts.DateQueued)
-
-	if err != nil {
-
-		if err != dhl.ErrNoRows {
-			t.Log(err.Error())
-			t.Fail()
-			return
-		}
-
-		t.Log(err.Error())
-	}
-
-	// t.Logf("EmailKey: %v, Subject: %v, Format: %v, Sender: %v, SenderAddress: %v, Date Queued: %v",
-	// 	emailkey, subject, format, sender, senderaddr, datequeued)
-
-	// t.Logf("EmailKey: %v, Subject: %v, Format: %v, Sender: %v, SenderAddress: %v, Date Queued: %v",
-	// 	*ts.EmailKey, *ts.Subject, *ts.Format, *ts.Sender, *ts.SenderAddr, *ts.DateQueued)
-
-	t.Logf("EmailKey: %v, Subject: %v, Format: %v, Sender: %v, SenderAddress: %v, Date Queued: %v",
-		ts.EmailKey, ts.Subject, ts.Format, ts.Sender, ts.SenderAddr, ts.DateQueued)
 }
 
 func TestWriteTransactions(t *testing.T) {
@@ -287,9 +239,7 @@ func TestWriteTransactions(t *testing.T) {
 		c dhl.DataHelperLite
 	)
 
-	//c = &SQLServerHelper{}
-
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -310,62 +260,35 @@ func TestWriteTransactions(t *testing.T) {
 	}
 	defer c.Close()
 
+	c.Begin()
+	defer c.Rollback()
+
+	_, err = c.Exec(`DELETE FROM JokeTable;`)
+	if err != nil {
+		//c.Rollback()
+		t.Log(err.Error())
+		return
+	}
+
 	i := 0
 
-	c.Begin()
-
 	for {
-
-		if i > 999 {
+		if i > 9999 {
 			break
 		}
 
-		_, err = c.Exec(`INSERT INTO tnfTelegramOutBox (
-									ApplicationID,
-									TelegramID,
-									Message,
-									[Status],
-									TransactionDate,
-									GuiID,
-									Principal,
-									PrinGroup,
-									CustPONo,
-									PoStatus)
-							VALUES ('TestApp',
-									'3dadasdas',
-									 'Message' + @p1,
-									1,
-									GETDATE(),
-									NEWID(),
-									@p2,
-									'TESTGRP',
-									'PONO',
-									'OK');`, fmt.Sprintf("%d", i), i)
+		_, err = c.Exec(`
+			INSERT INTO JokeTable (ID, Code, Name)
+			VALUES (?, ?, ?);`, i, fmt.Sprintf("CODE%d", i), fmt.Sprintf("Code %d", i))
 		if err != nil {
-			c.Rollback()
+			//c.Rollback()
 			t.Log(err.Error())
 			break
 		}
 
-		/*
-			if (i % 5) == 0 {
-				c.Mark(`MO`)
-			}
-
-			if (i % 10) == 0 {
-				//c.Save(`MO`)
-				c.Discard(`MO`)
-			}
-		*/
-
-		//t.Logf("%d affected rows", affr)
-
 		i++
 	}
-
-	// c.Rollback()
 	c.Commit()
-
 }
 
 func TestSequence(t *testing.T) {
@@ -375,7 +298,7 @@ func TestSequence(t *testing.T) {
 		c dhl.DataHelperLite
 	)
 
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -424,13 +347,20 @@ func TestSequence(t *testing.T) {
 
 func TestMultipleOpen(t *testing.T) {
 
+	type Slave struct {
+		ID       int
+		ParentID int
+		Code     string
+		Name     string
+	}
+
 	var repeat = func() {
 		var (
 			err error
 			c   dhl.DataHelperLite
 		)
 
-		c, err = dhl.New(nil, `ssdhlite`)
+		c, err = dhl.New(nil, `sqtdhlite`)
 		if err != nil {
 			t.Log(err.Error())
 			t.Fail()
@@ -451,7 +381,7 @@ func TestMultipleOpen(t *testing.T) {
 		}
 		defer c.Close()
 
-		rows, err := c.Query(`SELECT TOP 1 EmailKey, Subject, Format, SenderName, SenderAddress, DateQueued FROM tnfEmailSent;`)
+		rows, err := c.Query(`SELECT ID, Code, Name, ParentID FROM SlaveTable1;`)
 		if err != nil {
 			t.Log(err.Error())
 			t.Fail()
@@ -459,35 +389,24 @@ func TestMultipleOpen(t *testing.T) {
 		}
 		defer rows.Close()
 
-		var (
-			emailkey                            int64
-			subject, format, sender, senderaddr string
-			datequeued                          time.Time
-		)
+		ts := Slave{}
 
 		for rows.Next() {
 			err = rows.Scan(
-				&emailkey,
-				&subject,
-				&format,
-				&sender,
-				&senderaddr,
-				&datequeued)
-
+				&ts.ID,
+				&ts.Code,
+				&ts.Name,
+				&ts.ParentID)
 			if err != nil {
 				t.Log(err.Error())
 				t.Fail()
 				return
 			}
 
-			// t.Logf("EmailKey: %d, Subject: %s, Format: %s, Sender: %s, SenderAddress: %s, Date Queued: %s",
-			// 	emailkey, subject, format, sender, senderaddr, datequeued.Format(`2006-01-02T15:04:05.000Z`))
-
-			t.Logf("EmailKey: %d, Subject: %s, Format: %s, Sender: %s, SenderAddress: %s, Date Queued: %s",
-				emailkey, subject, format, sender, senderaddr, datequeued)
+			t.Logf("ID: %d, Code: %s, Name: %s, ParentID: %d", ts.ID, ts.Code, ts.Name, ts.ParentID)
 		}
 
-		if rows.Err() != nil {
+		if err = rows.Err(); err != nil {
 			t.Log(err.Error())
 			return
 		}
@@ -506,9 +425,7 @@ func TestExists(t *testing.T) {
 		c      dhl.DataHelperLite
 	)
 
-	//c = &SQLServerHelper{}
-
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -529,7 +446,7 @@ func TestExists(t *testing.T) {
 	}
 	defer c.Close()
 
-	exists, err = c.Exists(`tnfEmailSent WHERE EmailKey = @p1;`, 7)
+	exists, err = c.Exists(`SlaveTable2 WHERE ID = ?`, 7)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -546,9 +463,7 @@ func TestQueryArray(t *testing.T) {
 		c   dhl.DataHelperLite
 	)
 
-	//c = &SQLServerHelper{}
-
-	c, err = dhl.New(nil, `ssdhlite`)
+	c, err = dhl.New(nil, `sqtdhlite`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -569,11 +484,9 @@ func TestQueryArray(t *testing.T) {
 	}
 	defer c.Close()
 
-	//var arr []int
 	var arr []string
 
-	//err = c.QueryArray(`SELECT EmailKey FROM tnfEmailSent;`, &arr)
-	err = c.QueryArray(`SELECT application_id FROM pub.application;`, &arr)
+	err = c.QueryArray(`SELECT code FROM SlaveTable2;`, &arr)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()

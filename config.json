@@ -15,7 +15,7 @@
             "GroupID": "DEFAULT",
             "SequenceGenerator" : {
                 "UpsertQuery" : "",
-                "ResultQuery" : "INSERT INTO users (sequence_name, next) VALUES ('{SequenceName}', 1) ON CONFLICT(username) DO UPDATE SET next = excluded.next RETURNING next;",
+                "ResultQuery" : "INSERT INTO SequenceTable (sequence_name, next) VALUES ('{SequenceName}', 1) ON CONFLICT(sequence_name) DO UPDATE SET next = next + 1 RETURNING next;",
                 "NamePlaceHolder": "{SequenceName}"
             }
         }
