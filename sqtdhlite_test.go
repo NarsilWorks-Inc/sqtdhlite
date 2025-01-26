@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	dhl "github.com/NarsilWorks-Inc/datahelperlite"
 	_ "github.com/denisenkom/go-mssqldb"
@@ -49,6 +50,7 @@ const (
 			Code nvarchar(10),
 			[Name] nvarchar(25),
 			Cost decimal(10,4),
+			DateCreated datetime,
 			PRIMARY KEY ([ID] ASC)
 		);
 
@@ -279,8 +281,8 @@ func TestWriteTransactions(t *testing.T) {
 		}
 
 		_, err = c.Exec(`
-			INSERT INTO JokeTable (ID, Code, Name, Cost)
-			VALUES (?, ?, ?, ?);`, i, fmt.Sprintf("CODE%d", i), fmt.Sprintf("Code %d", i), 12.57*float64(i))
+			INSERT INTO JokeTable (ID, Code, Name, Cost, DateCreated)
+			VALUES (?, ?, ?, ?, ?);`, i, fmt.Sprintf("CODE%d", i), fmt.Sprintf("Code %d", i), 12.57*float64(i), time.Now())
 		if err != nil {
 			//c.Rollback()
 			t.Log(err.Error())
@@ -320,15 +322,16 @@ func TestGetRowsFromJoke(t *testing.T) {
 	defer c.Close()
 
 	type Joke struct {
-		ID   int
-		Code string
-		Name string
-		Cost ssd.Decimal
+		ID          int
+		Code        string
+		Name        string
+		Cost        ssd.Decimal
+		DateCreated *time.Time
 	}
 
 	ts := Joke{}
 
-	rows, err := c.Query(`SELECT ID, Code, Name, Cost FROM JokeTable;`)
+	rows, err := c.Query(`SELECT ID, Code, Name, Cost, DateCreated FROM JokeTable;`)
 	if err != nil {
 		t.Log(err.Error())
 		t.Fail()
@@ -337,14 +340,14 @@ func TestGetRowsFromJoke(t *testing.T) {
 	defer rows.Close()
 
 	for rows.Next() {
-		err = rows.Scan(&ts.ID, &ts.Code, &ts.Name, &ts.Cost)
+		err = rows.Scan(&ts.ID, &ts.Code, &ts.Name, &ts.Cost, &ts.DateCreated)
 		if err != nil {
 			t.Log(err.Error())
 			t.Fail()
 			return
 		}
 
-		t.Logf("ID: %d, Code: %s, Name: %s, Cost: %v", ts.ID, ts.Code, ts.Name, ts.Cost)
+		t.Logf("ID: %d, Code: %s, Name: %s, Cost: %v, DateCreated: %v", ts.ID, ts.Code, ts.Name, ts.Cost, ts.DateCreated)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -634,7 +637,7 @@ func TestExecRowsAffected(t *testing.T) {
 		return
 	}
 
-	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`APPSHUB`)); err != nil {
+	if err = c.Open(context.Background(), cf.GetDatabaseInfo(`DEFAULT`)); err != nil {
 		t.Log(err.Error())
 		t.Fail()
 		return
@@ -644,10 +647,8 @@ func TestExecRowsAffected(t *testing.T) {
 	c.Begin()
 	defer c.Rollback()
 
-	affr, err = c.Exec(`UPDATE {useraccount}
-						SET activation_code = ?,
-							activation_status='PENDING'
-						WHERE user_key = ?;`, `1bnSiVeH9qBcxXDn5hAhJQocRmP`, 35)
+	d := ssd.NewFromFloat32(3.45)
+	affr, err = c.Exec(`UPDATE JokeTable SET Cost=? WHERE ID=?`, d, 0)
 	if err != nil {
 		t.Fatalf(`%s`, err)
 	}
