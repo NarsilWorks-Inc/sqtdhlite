@@ -1,0 +1,22 @@
+{
+    "DefaultDatabaseID": "DEFAULT",
+    "Flags" : [
+        {"Key": "debug", "Value": "true"},
+        {"Key":"helperid", "Value": "ssdhlite"}
+    ],
+    "Databases" : [
+        {
+            "ID" : "DEFAULT",
+            "ConnectionString" : "sample.db",
+            "DriverName" : "sqlite",
+            "InterpolateTables": true,
+            "StorageType": "FILE",
+            "GroupID": "DEFAULT",
+            "SequenceGenerator" : {
+                "UpsertQuery" : "",
+                "ResultQuery" : "INSERT INTO SequenceTable (sequence_name, next) VALUES ('{SequenceName}', 1) ON CONFLICT(sequence_name) DO UPDATE SET next = next + 1 RETURNING next;",
+                "NamePlaceHolder": "{SequenceName}"
+            }
+        }
+    ]
+}

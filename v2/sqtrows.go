@@ -3,7 +3,7 @@ package sqtdhlite
 import (
 	"database/sql"
 
-	"github.com/NarsilWorks-Inc/datahelperlite"
+	"github.com/NarsilWorks-Inc/datahelperlite/v2"
 )
 
 // SQLiteRows struct

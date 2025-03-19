@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
-	dhl "github.com/NarsilWorks-Inc/datahelperlite"
-	cfg "github.com/eaglebush/config"
+	dhl "github.com/NarsilWorks-Inc/datahelperlite/v2"
+	dn "github.com/eaglebush/datainfo"
+	"github.com/jackc/pgx"
 	_ "modernc.org/sqlite"
 )
 
@@ -20,7 +21,7 @@ type SQLiteHelper struct {
 	db   *sql.DB
 	tx   *sql.Tx
 	conn *sql.Conn
-	dbi  *cfg.DatabaseInfo
+	dbi  *dn.DataInfo
 	ctx  context.Context
 	trCnt,
 	reuseCnt,
@@ -44,7 +45,7 @@ func (h *SQLiteHelper) NewHelper() dhl.DataHelperLite {
 }
 
 // Open a new connection
-func (h *SQLiteHelper) Open(ctx context.Context, di *cfg.DatabaseInfo) error {
+func (h *SQLiteHelper) Open(ctx context.Context, di *dn.DataInfo) error {
 
 	// If Sql handle and connection is valid
 	if h.db != nil && h.conn != nil {
@@ -57,14 +58,18 @@ func (h *SQLiteHelper) Open(ctx context.Context, di *cfg.DatabaseInfo) error {
 	h.err = nil
 	h.txInst = make(map[uint8]uint8)
 	h.txInstIdx = 0
-	h.dbi = di
+	if di.ConnectionString == nil || *di.ConnectionString == "" {
+		h.err = fmt.Errorf("open: %w", dhl.ErrNoConnStr)
+		return h.err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	h.dbi = di
 	h.ctx = ctx
 
 	if h.db == nil {
-		h.db, h.err = sql.Open(`sqlite`, di.ConnectionString)
+		h.db, h.err = sql.Open(`sqlite`, *di.ConnectionString)
 		if h.err != nil {
 			h.err = fmt.Errorf("open: %w", h.err)
 			return h.err
@@ -143,7 +148,8 @@ func (h *SQLiteHelper) Begin() error {
 	if h.tx == nil {
 		h.tx, h.err = h.conn.BeginTx(h.ctx, &sql.TxOptions{})
 		if h.err != nil {
-			return fmt.Errorf("begin: %w", h.err)
+			h.err = fmt.Errorf("begin: %w", h.err)
+			return h.err
 		}
 	}
 	// Increment transaction count
@@ -265,6 +271,7 @@ func (h *SQLiteHelper) rollbk() error {
 	// Perform rollback
 	if h.err = h.tx.Rollback(); h.err != nil && !errors.Is(h.err, sql.ErrTxDone) {
 		h.err = fmt.Errorf("rollback: %w", h.err)
+		return h.err
 	}
 
 	// Reset all transaction state after rollback
@@ -350,9 +357,7 @@ func (h *SQLiteHelper) Save(name string) error {
 
 // Query retrieves rows from database
 func (h *SQLiteHelper) Query(querySql string, args ...any) (dhl.Rows, error) {
-	var (
-		sqr *sql.Rows
-	)
+
 	if h.err != nil {
 		return nil, h.err
 	}
@@ -360,9 +365,29 @@ func (h *SQLiteHelper) Query(querySql string, args ...any) (dhl.Rows, error) {
 		h.err = fmt.Errorf("query: %w", dhl.ErrNoConn)
 		return nil, h.err
 	}
+
+	var (
+		sqr *sql.Rows
+		placeholder,
+		schema string
+		paraminseq bool
+	)
+
+	placeholder = "?"
+	if h.dbi.ParameterPlaceHolder != nil && *h.dbi.ParameterPlaceHolder != "" {
+		placeholder = *h.dbi.ParameterPlaceHolder
+	}
+	if h.dbi.ParameterInSequence != nil {
+		paraminseq = *h.dbi.ParameterInSequence
+	}
+	if h.dbi.Schema != nil && *h.dbi.Schema != "" {
+		schema = *h.dbi.Schema
+	}
+
 	// replace question mark (?) parameter with configured query parameter, if there are any
+	querySql = dhl.ReplaceQueryParamMarker(querySql, paraminseq, placeholder)
 	// replace tables meant for interpolation {table} for putting the schema
-	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder), h.dbi.Schema)
+	querySql = dhl.InterpolateTable(querySql, schema)
 	if h.tx != nil {
 		sqr, h.err = h.tx.QueryContext(h.ctx, querySql, args...)
 	} else {
@@ -381,12 +406,26 @@ func (h *SQLiteHelper) Query(querySql string, args ...any) (dhl.Rows, error) {
 
 // QueryArray puts the single column result to an output array
 func (h *SQLiteHelper) QueryArray(querySql string, out any, args ...any) error {
+	if h.err != nil {
+		return h.err
+	}
 
 	var (
 		sqr *sql.Rows
+		placeholder,
+		schema string
+		paraminseq bool
 	)
-	if h.err != nil {
-		return h.err
+
+	placeholder = "?"
+	if h.dbi.ParameterPlaceHolder != nil && *h.dbi.ParameterPlaceHolder != "" {
+		placeholder = *h.dbi.ParameterPlaceHolder
+	}
+	if h.dbi.ParameterInSequence != nil {
+		paraminseq = *h.dbi.ParameterInSequence
+	}
+	if h.dbi.Schema != nil && *h.dbi.Schema != "" {
+		schema = *h.dbi.Schema
 	}
 
 	switch out.(type) {
@@ -401,9 +440,9 @@ func (h *SQLiteHelper) QueryArray(querySql string, out any, args ...any) error {
 		return h.err
 	}
 	// replace question mark (?) parameter with configured query parameter, if there are any
-	querySql = dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder)
+	querySql = dhl.ReplaceQueryParamMarker(querySql, paraminseq, placeholder)
 	// replace tables meant for interpolation {table} for putting the schema
-	querySql = dhl.InterpolateTable(querySql, h.dbi.Schema)
+	querySql = dhl.InterpolateTable(querySql, schema)
 	if h.tx != nil {
 		sqr, h.err = h.tx.QueryContext(h.ctx, querySql, args...)
 	} else {
@@ -610,10 +649,27 @@ func (h *SQLiteHelper) QueryRow(querySql string, args ...any) dhl.Row {
 		return nil
 	}
 	if h.conn == nil {
+		h.err = fmt.Errorf("queryrow: %w", dhl.ErrNoConn)
 		return nil
 	}
+	var (
+		placeholder,
+		schema string
+		paraminseq bool
+	)
+
+	placeholder = "?"
+	if h.dbi.ParameterPlaceHolder != nil && *h.dbi.ParameterPlaceHolder != "" {
+		placeholder = *h.dbi.ParameterPlaceHolder
+	}
+	if h.dbi.ParameterInSequence != nil {
+		paraminseq = *h.dbi.ParameterInSequence
+	}
+	if h.dbi.Schema != nil && *h.dbi.Schema != "" {
+		schema = *h.dbi.Schema
+	}
 	// replace question mark (?) parameter with configured query parameter, if there are any
-	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder), h.dbi.Schema)
+	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, paraminseq, placeholder), schema)
 	if h.tx != nil {
 		return NewSQLServerRow(h.tx.QueryRowContext(h.ctx, querySql, args...))
 	}
@@ -622,11 +678,6 @@ func (h *SQLiteHelper) QueryRow(querySql string, args ...any) dhl.Row {
 
 // Exec executes data manipulation command and returns the number of affected rows
 func (h *SQLiteHelper) Exec(querySql string, args ...any) (int64, error) {
-
-	var (
-		ra int64
-		sq sql.Result
-	)
 	if h.err != nil {
 		return 0, h.err
 	}
@@ -634,13 +685,39 @@ func (h *SQLiteHelper) Exec(querySql string, args ...any) (int64, error) {
 		h.err = fmt.Errorf("exec: %w", dhl.ErrNoConn)
 		return 0, h.err
 	}
+	var (
+		placeholder,
+		schema string
+		paraminseq bool
+		ra         int64
+		sq         sql.Result
+	)
+
+	placeholder = "?"
+	if h.dbi.ParameterPlaceHolder != nil && *h.dbi.ParameterPlaceHolder != "" {
+		placeholder = *h.dbi.ParameterPlaceHolder
+	}
+	if h.dbi.ParameterInSequence != nil {
+		paraminseq = *h.dbi.ParameterInSequence
+	}
+	if h.dbi.Schema != nil && *h.dbi.Schema != "" {
+		schema = *h.dbi.Schema
+	}
 	// replace question mark (?) parameter with configured query parameter, if there are any
-	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder), h.dbi.Schema)
+	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, paraminseq, placeholder), schema)
 	if h.tx != nil {
 		sq, h.err = h.tx.ExecContext(h.ctx, querySql, args...)
-	} else {
-		sq, h.err = h.conn.ExecContext(h.ctx, querySql, args...)
+		if h.err != nil {
+			if !errors.Is(h.err, pgx.ErrTxClosed) {
+				h.err = fmt.Errorf("exec: %w", h.err)
+				return 0, h.err
+			}
+			h.err = nil
+		}
+		ra, _ = sq.RowsAffected()
+		return ra, nil
 	}
+	sq, h.err = h.conn.ExecContext(h.ctx, querySql, args...)
 	if h.err != nil {
 		h.err = fmt.Errorf("exec: %w", h.err)
 		return 0, h.err
@@ -654,17 +731,33 @@ func (h *SQLiteHelper) Exists(sqlWithParams string, args ...any) (bool, error) {
 
 	var (
 		cnt int
-		sql string
+		sql,
+		placeholder,
+		schema string
+		paraminseq bool
 	)
+
 	if h.err != nil {
 		return false, h.err
 	}
 	if h.conn == nil {
 		return false, nil
 	}
+
+	placeholder = "?"
+	if h.dbi.ParameterPlaceHolder != nil && *h.dbi.ParameterPlaceHolder != "" {
+		placeholder = *h.dbi.ParameterPlaceHolder
+	}
+	if h.dbi.ParameterInSequence != nil {
+		paraminseq = *h.dbi.ParameterInSequence
+	}
+	if h.dbi.Schema != nil && *h.dbi.Schema != "" {
+		schema = *h.dbi.Schema
+	}
+
 	// replace question mark (?) parameter with configured query parameter, if there are any
-	sqlWithParams = dhl.ReplaceQueryParamMarker(sqlWithParams, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder)
-	sqlWithParams = dhl.InterpolateTable(sqlWithParams, h.dbi.Schema)
+	sqlWithParams = dhl.ReplaceQueryParamMarker(sqlWithParams, paraminseq, placeholder)
+	sqlWithParams = dhl.InterpolateTable(sqlWithParams, schema)
 	if strings.HasSuffix(sqlWithParams, `;`) {
 		h.err = errors.New(`semicolons are not allowed at the end of this query`)
 		return false, h.err
@@ -679,9 +772,8 @@ func (h *SQLiteHelper) Exists(sqlWithParams string, args ...any) (bool, error) {
 			}
 			h.err = nil
 		}
-		return cnt == 1, nil
+		return false, nil
 	}
-
 	h.err = h.conn.QueryRowContext(h.ctx, sql, args...).Scan(&cnt)
 	if h.err != nil {
 		if !errors.Is(h.err, dhl.ErrNoRows) {
@@ -762,18 +854,26 @@ func (h *SQLiteHelper) VerifyWithin(tableName string, values []dhl.VerifyExpress
 	}
 
 	var (
-		i int
+		i, exists int
 		andstr,
 		placeholder,
+		schema,
 		ph string
+		paraminseq bool
 	)
 
-	tableNameWithParameters := tableName
 	args := make([]any, 0)
 	placeholder = "?"
-	if h.dbi.ParameterPlaceholder != "" {
-		placeholder = h.dbi.ParameterPlaceholder
+	if h.dbi.ParameterPlaceHolder != nil && *h.dbi.ParameterPlaceHolder != "" {
+		placeholder = *h.dbi.ParameterPlaceHolder
 	}
+	if h.dbi.ParameterInSequence != nil {
+		paraminseq = *h.dbi.ParameterInSequence
+	}
+	if h.dbi.Schema != nil && *h.dbi.Schema != "" {
+		schema = *h.dbi.Schema
+	}
+	tableNameWithParameters := tableName
 	if len(values) > 0 {
 		tableNameWithParameters += ` WHERE `
 	}
@@ -786,7 +886,7 @@ func (h *SQLiteHelper) VerifyWithin(tableName string, values []dhl.VerifyExpress
 			if v.Operator == "" {
 				v.Operator = "="
 			}
-			if h.dbi.ParameterInSequence {
+			if paraminseq {
 				ph = placeholder + strconv.Itoa(i+1)
 			}
 			args = append(args, v.Value)
@@ -796,12 +896,7 @@ func (h *SQLiteHelper) VerifyWithin(tableName string, values []dhl.VerifyExpress
 		andstr = " AND "
 	}
 
-	var (
-		sql    string
-		exists int
-	)
-
-	sql = dhl.InterpolateTable(`SELECT EXISTS(SELECT 1 FROM `+tableNameWithParameters+` LIMIT 1);`, h.dbi.Schema)
+	sql := dhl.InterpolateTable(`SELECT EXISTS(SELECT 1 FROM `+tableNameWithParameters+` LIMIT 1);`, schema)
 	h.err = h.QueryRow(sql, args...).Scan(&exists)
 	if h.err != nil {
 		if !errors.Is(h.err, dhl.ErrNoRows) {
@@ -809,9 +904,7 @@ func (h *SQLiteHelper) VerifyWithin(tableName string, values []dhl.VerifyExpress
 			return false, h.err
 		}
 		h.err = nil
-		return false, nil
 	}
-
 	return exists == 1, nil
 }
 
