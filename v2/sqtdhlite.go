@@ -877,6 +877,7 @@ func (h *SQLiteHelper) VerifyWithin(tableName string, values []dhl.VerifyExpress
 	if len(values) > 0 {
 		tableNameWithParameters += ` WHERE `
 	}
+	ph = placeholder
 	for _, v := range values {
 		if isInterfaceNil(v.Value) {
 			v.Operator = " IS NULL"
