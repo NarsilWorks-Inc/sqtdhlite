@@ -23,11 +23,11 @@ type SQLiteHelper struct {
 	dbi  *cfg.DatabaseInfo
 	ctx  context.Context
 	trCnt,
-	reuseCnt,
-	txInstIdx uint8
-	rw     sync.RWMutex
-	txInst map[uint8]uint8
-	err    error
+	reuseCnt uint8
+	rw  sync.RWMutex
+	err error
+	rollbackTriggered,
+	committed bool
 }
 
 func init() {
@@ -37,10 +37,7 @@ func init() {
 
 // NewHelper instantiates new helper
 func (h *SQLiteHelper) NewHelper() dhl.DataHelperLite {
-	return &SQLiteHelper{
-		txInst:    make(map[uint8]uint8),
-		txInstIdx: 0,
-	}
+	return &SQLiteHelper{}
 }
 
 // Open a new connection
@@ -55,8 +52,6 @@ func (h *SQLiteHelper) Open(ctx context.Context, di *cfg.DatabaseInfo) error {
 	}
 
 	h.err = nil
-	h.txInst = make(map[uint8]uint8)
-	h.txInstIdx = 0
 	h.dbi = di
 	if ctx == nil {
 		ctx = context.Background()
@@ -143,7 +138,8 @@ func (h *SQLiteHelper) Begin() error {
 	if h.tx == nil {
 		h.tx, h.err = h.conn.BeginTx(h.ctx, &sql.TxOptions{})
 		if h.err != nil {
-			return fmt.Errorf("begin: %w", h.err)
+			h.err = fmt.Errorf("begin: %w", h.err)
+			return h.err
 		}
 	}
 	// Increment transaction count
@@ -151,8 +147,8 @@ func (h *SQLiteHelper) Begin() error {
 	// Move the new index to the forward position
 	h.rw.Lock()
 	h.trCnt++
-	h.txInst[h.trCnt] = 1
-	h.txInstIdx = h.trCnt
+	h.committed = false         // ✅ Reset commit state
+	h.rollbackTriggered = false // ✅ Reset rollback state
 	h.rw.Unlock()
 	return nil
 }
@@ -160,7 +156,7 @@ func (h *SQLiteHelper) Begin() error {
 func (h *SQLiteHelper) Commit() error {
 
 	// Return early if any of the conditions are true
-	if h.tx == nil || h.trCnt == 0 || h.txInstIdx == 0 || len(h.txInst) == 0 {
+	if h.tx == nil || h.trCnt == 0 || h.rollbackTriggered || h.committed {
 		return nil
 	}
 
@@ -172,18 +168,9 @@ func (h *SQLiteHelper) Commit() error {
 	h.rw.Lock()
 	defer h.rw.Unlock()
 
-	// Check if the current transaction instance is valid
-	if flag := h.txInst[h.txInstIdx]; flag == 0 {
-		h.txInstIdx-- // Move to the previous transaction instance
-		return nil
-	}
-
-	// If the transaction is not the first transaction,
-	// reduce the transaction count and set the current map index value
-	// as processed
+	// If the transaction is not the first transaction, reduce the transaction count
 	if h.trCnt > 1 {
 		h.trCnt--
-		h.txInst[h.txInstIdx] = 0 // Mark the current transaction as processed
 		return nil
 	}
 
@@ -198,18 +185,17 @@ func (h *SQLiteHelper) Commit() error {
 	}
 
 	// Commit the outermost transaction
-	if h.trCnt == 1 {
-		if h.err = h.tx.Commit(); h.err != nil && !errors.Is(h.err, sql.ErrTxDone) {
-			h.err = fmt.Errorf("commit: %w", h.err)
-			return h.err
-		}
+	if h.err = h.tx.Commit(); h.err != nil && !errors.Is(h.err, sql.ErrTxDone) {
+		h.err = fmt.Errorf("commit: %w", h.err)
+		return h.err
 	}
 
 	// Reset transaction state after a successful commit
 	h.tx = nil
 	h.trCnt = 0
-	h.txInstIdx = 0
-	h.txInst = make(map[uint8]uint8)
+	h.committed = true
+	h.tx = nil
+	h.rollbackTriggered = false
 
 	return nil
 }
@@ -217,7 +203,7 @@ func (h *SQLiteHelper) Commit() error {
 func (h *SQLiteHelper) Rollback() error {
 
 	// Return early if any of the conditions are true
-	if h.tx == nil || h.trCnt == 0 || h.txInstIdx == 0 || len(h.txInst) == 0 {
+	if h.tx == nil || h.trCnt == 0 || h.committed {
 		return nil
 	}
 
@@ -225,32 +211,20 @@ func (h *SQLiteHelper) Rollback() error {
 		return h.rollbk()
 	}
 
-	// Handle nested transactions
-	// If the value of the map is zero, we move to the earlier transaction
-	if flag := h.txInst[h.txInstIdx]; flag == 0 {
-		h.txInstIdx--
-		return nil
-	}
-
-	// If the transaction is not the first transaction,
-	// reduce the transaction count and set the current map index value
-	// as processed
+	// If the transaction is not the first transaction, reduce the transaction count
 	if h.trCnt > 1 {
 		h.trCnt--
-		h.txInst[h.txInstIdx] = 0 // Mark the current transaction as processed
 		return nil
 	}
 
 	// If this is the outermost transaction, rollback the transaction
-	// If the queries resulted an error, we also roll it back
-	if h.trCnt == 1 {
-		return h.rollbk()
-	}
-
-	return nil
+	return h.rollbk()
 }
 
 func (h *SQLiteHelper) rollbk() error {
+	if h.committed {
+		return nil // 🔧 If already committed, skip rollback
+	}
 
 	// Ensure DB, connection, and transaction are valid before rolling back
 	if h.conn == nil {
@@ -265,17 +239,17 @@ func (h *SQLiteHelper) rollbk() error {
 	// Perform rollback
 	if h.err = h.tx.Rollback(); h.err != nil && !errors.Is(h.err, sql.ErrTxDone) {
 		h.err = fmt.Errorf("rollback: %w", h.err)
+		return h.err
 	}
 
 	// Reset all transaction state after rollback
 	h.rw.Lock()
-	defer h.rw.Unlock()
-
 	h.tx = nil
 	h.trCnt = 0
-	h.txInstIdx = 0
 	h.err = nil
-	h.txInst = make(map[uint8]uint8)
+	h.committed = false         // 🔧 Reset flags
+	h.rollbackTriggered = false // 🔧 Reset flags (rollback is done)
+	h.rw.Unlock()
 	return nil
 }
 
