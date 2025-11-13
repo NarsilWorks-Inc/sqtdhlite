@@ -21,12 +21,14 @@ type SQLiteHelper struct {
 	tx   *sql.Tx
 	conn *sql.Conn
 	dbi  *cfg.DatabaseInfo
-	ctx  context.Context
+	ctx,
+	rCtx context.Context
 	trCnt,
 	reuseCnt uint8
 	rw  sync.RWMutex
 	err error
 	rollbackTriggered,
+	poolAtInit,
 	committed bool
 	trnIdMap  map[int8]bool
 	lastTrnId int8
@@ -94,6 +96,18 @@ func (h *SQLiteHelper) Open(ctx context.Context, di *cfg.DatabaseInfo) error {
 	return nil
 }
 
+// Acquire sets all queries to a new context from pool.
+//
+// It will return an error if the current connection is not pooled.
+func (h *SQLiteHelper) Acquire(ctx context.Context) error {
+	if !h.poolAtInit {
+		h.err = fmt.Errorf("acquire: opened connection is not from pool")
+		return h.err
+	}
+	h.rCtx = ctx
+	return nil
+}
+
 // Close the helper
 func (h *SQLiteHelper) Close() error {
 	if h.conn == nil {
@@ -113,6 +127,11 @@ func (h *SQLiteHelper) Close() error {
 	// rollback if it exists
 	if h.tx != nil {
 		h.Rollback()
+	}
+
+	// If pool was set externally, do not close
+	if h.poolAtInit {
+		return nil
 	}
 
 	if h.err = h.conn.Close(); h.err != nil {
@@ -138,7 +157,13 @@ func (h *SQLiteHelper) Begin() error {
 		return h.err
 	}
 	if h.tx == nil {
-		h.tx, h.err = h.conn.BeginTx(h.ctx, &sql.TxOptions{})
+		// Set the context to the connection context
+		// Use the acquired context if availables
+		ctx := h.ctx
+		if h.rCtx != nil {
+			ctx = h.rCtx
+		}
+		h.tx, h.err = h.conn.BeginTx(ctx, &sql.TxOptions{})
 		if h.err != nil {
 			h.err = fmt.Errorf("begin: %w", h.err)
 			return h.err
@@ -175,7 +200,11 @@ func (h *SQLiteHelper) BeginManually() error {
 		return h.err
 	}
 	if h.tx == nil {
-		h.tx, h.err = h.conn.BeginTx(h.ctx, &sql.TxOptions{})
+		ctx := h.ctx
+		if h.rCtx != nil {
+			ctx = h.rCtx
+		}
+		h.tx, h.err = h.conn.BeginTx(ctx, &sql.TxOptions{})
 		if h.err != nil {
 			h.err = fmt.Errorf("begin-manually: %w", h.err)
 			return h.err
@@ -325,7 +354,11 @@ func (h *SQLiteHelper) Mark(name string) error {
 		return h.err
 	}
 	if h.trCnt > 0 {
-		_, h.err = h.tx.ExecContext(h.ctx, `SAVEPOINT sp_`+name+`;`)
+		ctx := h.ctx
+		if h.rCtx != nil {
+			ctx = h.rCtx
+		}
+		_, h.err = h.tx.ExecContext(ctx, `SAVEPOINT sp_`+name+`;`)
 		if h.err != nil {
 			h.err = fmt.Errorf("mark: %w", h.err)
 			return h.err
@@ -348,7 +381,11 @@ func (h *SQLiteHelper) Discard(name string) error {
 		return h.err
 	}
 	if h.trCnt > 0 {
-		_, h.err = h.tx.ExecContext(h.ctx, `ROLLBACK TO sp_`+name+`;`)
+		ctx := h.ctx
+		if h.rCtx != nil {
+			ctx = h.rCtx
+		}
+		_, h.err = h.tx.ExecContext(ctx, `ROLLBACK TO sp_`+name+`;`)
 		if h.err != nil {
 			h.err = fmt.Errorf("discard: %w", h.err)
 			return h.err
@@ -371,7 +408,11 @@ func (h *SQLiteHelper) Save(name string) error {
 		return h.err
 	}
 	if h.trCnt > 0 {
-		_, h.err = h.tx.ExecContext(h.ctx, `RELEASE TO sp_`+name+`;`)
+		ctx := h.ctx
+		if h.rCtx != nil {
+			ctx = h.rCtx
+		}
+		_, h.err = h.tx.ExecContext(ctx, `RELEASE TO sp_`+name+`;`)
 		if h.err != nil {
 			h.err = fmt.Errorf("save: %w", h.err)
 			return h.err
@@ -395,10 +436,15 @@ func (h *SQLiteHelper) Query(querySql string, args ...any) (dhl.Rows, error) {
 	// replace question mark (?) parameter with configured query parameter, if there are any
 	// replace tables meant for interpolation {table} for putting the schema
 	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder), h.dbi.Schema)
+
+	ctx := h.ctx
+	if h.rCtx != nil {
+		ctx = h.rCtx
+	}
 	if h.tx != nil {
-		sqr, h.err = h.tx.QueryContext(h.ctx, querySql, args...)
+		sqr, h.err = h.tx.QueryContext(ctx, querySql, args...)
 	} else {
-		sqr, h.err = h.conn.QueryContext(h.ctx, querySql, args...)
+		sqr, h.err = h.conn.QueryContext(ctx, querySql, args...)
 	}
 	if h.err != nil {
 		h.err = fmt.Errorf("query: %w", h.err)
@@ -436,10 +482,16 @@ func (h *SQLiteHelper) QueryArray(querySql string, out any, args ...any) error {
 	querySql = dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder)
 	// replace tables meant for interpolation {table} for putting the schema
 	querySql = dhl.InterpolateTable(querySql, h.dbi.Schema)
+
+	ctx := h.ctx
+	if h.rCtx != nil {
+		ctx = h.rCtx
+	}
+
 	if h.tx != nil {
-		sqr, h.err = h.tx.QueryContext(h.ctx, querySql, args...)
+		sqr, h.err = h.tx.QueryContext(ctx, querySql, args...)
 	} else {
-		sqr, h.err = h.conn.QueryContext(h.ctx, querySql, args...)
+		sqr, h.err = h.conn.QueryContext(ctx, querySql, args...)
 	}
 	if h.err != nil {
 		h.err = fmt.Errorf("queryarray: %w", h.err)
@@ -646,10 +698,14 @@ func (h *SQLiteHelper) QueryRow(querySql string, args ...any) dhl.Row {
 	}
 	// replace question mark (?) parameter with configured query parameter, if there are any
 	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder), h.dbi.Schema)
-	if h.tx != nil {
-		return NewSQLServerRow(h.tx.QueryRowContext(h.ctx, querySql, args...))
+	ctx := h.ctx
+	if h.rCtx != nil {
+		ctx = h.rCtx
 	}
-	return NewSQLServerRow(h.conn.QueryRowContext(h.ctx, querySql, args...))
+	if h.tx != nil {
+		return NewSQLServerRow(h.tx.QueryRowContext(ctx, querySql, args...))
+	}
+	return NewSQLServerRow(h.conn.QueryRowContext(ctx, querySql, args...))
 }
 
 // Exec executes data manipulation command and returns the number of affected rows
@@ -668,10 +724,14 @@ func (h *SQLiteHelper) Exec(querySql string, args ...any) (int64, error) {
 	}
 	// replace question mark (?) parameter with configured query parameter, if there are any
 	querySql = dhl.InterpolateTable(dhl.ReplaceQueryParamMarker(querySql, h.dbi.ParameterInSequence, h.dbi.ParameterPlaceholder), h.dbi.Schema)
+	ctx := h.ctx
+	if h.rCtx != nil {
+		ctx = h.rCtx
+	}
 	if h.tx != nil {
-		sq, h.err = h.tx.ExecContext(h.ctx, querySql, args...)
+		sq, h.err = h.tx.ExecContext(ctx, querySql, args...)
 	} else {
-		sq, h.err = h.conn.ExecContext(h.ctx, querySql, args...)
+		sq, h.err = h.conn.ExecContext(ctx, querySql, args...)
 	}
 	if h.err != nil {
 		h.err = fmt.Errorf("exec: %w", h.err)
@@ -702,8 +762,12 @@ func (h *SQLiteHelper) Exists(sqlWithParams string, args ...any) (bool, error) {
 		return false, h.err
 	}
 	sql = `SELECT EXISTS(SELECT 1 FROM ` + sqlWithParams + ` LIMIT 1);`
+	ctx := h.ctx
+	if h.rCtx != nil {
+		ctx = h.rCtx
+	}
 	if h.tx != nil {
-		h.err = h.tx.QueryRowContext(h.ctx, sql, args...).Scan(&cnt)
+		h.err = h.tx.QueryRowContext(ctx, sql, args...).Scan(&cnt)
 		if h.err != nil {
 			if !errors.Is(h.err, dhl.ErrNoRows) {
 				h.err = fmt.Errorf("exists: %w", h.err)
@@ -714,7 +778,7 @@ func (h *SQLiteHelper) Exists(sqlWithParams string, args ...any) (bool, error) {
 		return cnt == 1, nil
 	}
 
-	h.err = h.conn.QueryRowContext(h.ctx, sql, args...).Scan(&cnt)
+	h.err = h.conn.QueryRowContext(ctx, sql, args...).Scan(&cnt)
 	if h.err != nil {
 		if !errors.Is(h.err, dhl.ErrNoRows) {
 			h.err = fmt.Errorf("exists: %w", h.err)
@@ -900,4 +964,24 @@ func (h *SQLiteHelper) NowUTC() *time.Time {
 		return &tm
 	}
 	return &tm
+}
+
+// Ping sends data packets to check pool connection
+func (h *SQLiteHelper) Ping() error {
+	return h.db.PingContext(h.ctx)
+}
+
+// Pooled indicates that the helper was set externally or pooled
+func (h *SQLiteHelper) Pooled() bool {
+	return h.poolAtInit
+}
+
+// PoolSet sets the state that the helper was set externally or being pooled
+func (h *SQLiteHelper) PoolSet() {
+	h.poolAtInit = true
+}
+
+// PoolUnset set the pool to unset
+func (h *SQLiteHelper) PoolUnset() {
+	h.poolAtInit = false
 }

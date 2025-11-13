@@ -987,3 +987,7 @@ func (h *SQLiteHelper) NowUTC() *time.Time {
 	}
 	return &tm
 }
+
+func (h *SQLiteHelper) Ping() error {
+	return nil
+}
