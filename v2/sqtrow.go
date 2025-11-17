@@ -4,20 +4,20 @@ import (
 	"database/sql"
 )
 
-// SQLServerRow struct
-type SQLServerRow struct {
+// SQLiteRow struct
+type SQLiteRow struct {
 	sqr *sql.Row
 }
 
 // NewSQLServerRow generates a datahelper compatible SQLServerRows
-func NewSQLServerRow(sqlr *sql.Row) SQLServerRow {
-	return SQLServerRow{
+func NewSQLServerRow(sqlr *sql.Row) SQLiteRow {
+	return SQLiteRow{
 		sqr: sqlr,
 	}
 }
 
 // Scan to destination variables
-func (ss SQLServerRow) Scan(dest ...interface{}) error {
+func (ss SQLiteRow) Scan(dest ...interface{}) error {
 	destq := prepareDest(dest)
 	if err := ss.sqr.Scan(destq...); err != nil {
 		return err

@@ -1,0 +1,21 @@
+{
+    "DefaultDatabaseID": "DEFAULT",
+    "Flags" : [
+        {"Key": "debug", "Value": "true"}
+    ],
+    "Databases" : [
+        {
+            "ID" : "DEFAULT",
+            "Schema": "public",
+            "ConnectionString" : "postgres://postgres:p@ssw0rd@localhost:5432/postgres?application_name=pgdhlite&search_path=public&connect_timeout=5",
+            "HelperID": "pgdhlite",
+            "DriverName" : "pgx",
+            "InterpolateTables": true,
+            "ParameterPlaceholder": "$1",
+            "ParameterInSequence": true,
+            "StorageType": "SERVER",
+            "GroupID": "DEFAULT",
+            "UTCDateFunction":"timezone('utc'::text, CURRENT_TIMESTAMP)"
+        }
+    ]
+}

@@ -9,8 +9,8 @@ type SQLiteRow struct {
 	sqr *sql.Row
 }
 
-// NewSQLServerRow generates a datahelper compatible SQLServerRows
-func NewSQLServerRow(sqlr *sql.Row) SQLiteRow {
+// NewSQLiteRow generates a datahelper compatible SQLServerRows
+func NewSQLiteRow(sqlr *sql.Row) SQLiteRow {
 	return SQLiteRow{
 		sqr: sqlr,
 	}
