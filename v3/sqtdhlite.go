@@ -912,7 +912,7 @@ func (dh *SQLiteHelper) getParamDataInfo() (ph string, pis bool, sch string) {
 	h := dh.hndl
 	dh.rw.RUnlock()
 	ph = "?"
-	sch = "public"
+	sch = ""
 	if h == nil || h.DI() == nil {
 		return
 	}
