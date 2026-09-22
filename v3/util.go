@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"reflect"
 	"time"
@@ -216,5 +217,13 @@ func isInterfaceNil(i any) bool {
 		return iv.IsNil()
 	default:
 		return false
+	}
+}
+
+func handlePanic(err *error) {
+	if r := recover(); r != nil {
+		if err != nil {
+			*err = fmt.Errorf("recovered: %v", r)
+		}
 	}
 }

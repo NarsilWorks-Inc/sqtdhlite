@@ -907,6 +907,119 @@ func (h *SQLiteHelper) Ping() error {
 	return nil
 }
 
+// UpsertReturning inserts a row into the table.
+// If a conflict occurs on the specified unique columns:
+//
+//   - If updateColumns is empty, the existing row is returned unchanged
+//   - If updateColumns is provided, the existing row is updated using EXCLUDED values
+//
+// Parameters:
+//   - insertColumns - columns in the INSERT. All NOT NULL columns without defaults must be included.
+//   - uniqueColumns - columns defining the conflict target
+//   - updateColumns -
+//     1. empty or nil → do not modify existing row on conflict
+//     2. non-empty → DO UPDATE SET col = EXCLUDED.col
+//   - returnColumns - columns to return
+//   - args - values for insertColumns, in order
+//
+// The method always returns the resulting row.
+func (dh *SQLiteHelper) UpsertReturning(
+	tableName string,
+	insertColumns []string,
+	uniqueColumns []string,
+	updateColumns []string,
+	returnColumns []string,
+	args ...any,
+) (dhl.Row, error) {
+	dh.rw.RLock()
+	tx, herr, hndl := dh.tx, dh.err, dh.hndl
+	dh.rw.RUnlock()
+	if herr != nil {
+		return NewSQLiteRow(nil), herr
+	}
+	if hndl == nil {
+		return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %w", dhl.ErrHandleNotSet)
+	}
+	if tableName == "" {
+		return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %s", "table name not set")
+	}
+	if len(insertColumns) == 0 {
+		return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %s", "insert columns needs to be set")
+	}
+	if len(uniqueColumns) == 0 {
+		return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %s", "unique columns needs to be set")
+	}
+	if len(returnColumns) == 0 {
+		return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %s", "return columns needs to be set")
+	}
+	if len(insertColumns) != len(args) {
+		return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %s", "insert columns count and arguments mismatch")
+	}
+	if len(updateColumns) > 0 {
+		for _, updCol := range updateColumns {
+			found := false
+			for _, insCol := range insertColumns {
+				if strings.EqualFold(insCol, updCol) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %s", "update columns does not exist in insert columns")
+			}
+		}
+	}
+	db := hndl.DB()
+	if db == nil {
+		return NewSQLiteRow(nil), fmt.Errorf("upsertreturning: %w", dhl.ErrHandleDBNotSet)
+	}
+
+	// Build query
+	cma := ""
+	sql := "INSERT INTO " + tableName + " (" + strings.Join(insertColumns, ",")
+	sql += ") VALUES (" + strings.TrimSuffix(strings.Repeat("?,", len(insertColumns)), ",") + ")\n"
+	sql += "ON CONFLICT (" + strings.Join(uniqueColumns, ",") + ")\n"
+	if len(updateColumns) == 0 {
+		sql += "DO NOTHING"
+	} else {
+		sql += "DO UPDATE SET "
+		for _, updCol := range updateColumns {
+			sql += cma + updCol + "=EXCLUDED." + updCol
+			cma = ","
+		}
+	}
+	sql += "\n"
+	sql += "RETURNING "
+	cma = ""
+	for _, retCol := range returnColumns {
+		sql += cma + retCol
+		cma = ","
+	}
+
+	placeholder, paramInSeq, schema := dh.getParamDataInfo()
+
+	// replace question mark (?) parameter with configured query parameter, if there are any
+	sql = dhl.ReplaceQueryParamMarker(sql, paramInSeq, placeholder)
+	sql = dhl.InterpolateTable(sql, schema)
+
+	defer handlePanic(nil)
+	if tx != nil {
+		return NewSQLiteRow(tx.QueryRowContext(dh.ctx, sql, args...)), nil
+	} else {
+		return NewSQLiteRow(db.QueryRowContext(dh.ctx, sql, args...)), nil
+	}
+}
+
+// VendorStatement returns a vendor-specific statement or query when present. Returns an empty string if not present
+func (dh *SQLiteHelper) VendorStatement(key string) string {
+	return ""
+}
+
+// VendorStatements Lists the vendor-specific statements implemented in a helper
+func (dh *SQLiteHelper) VendorStatements() []string {
+	return []string{}
+}
+
 func (dh *SQLiteHelper) getParamDataInfo() (ph string, pis bool, sch string) {
 	dh.rw.RLock()
 	h := dh.hndl
